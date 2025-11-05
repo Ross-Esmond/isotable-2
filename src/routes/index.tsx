@@ -1,12 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as THREE from 'three';
 import { useEffect, useRef } from 'react';
 import type { PointerEvent, WheelEvent } from 'react';
 import type { DatabaseEvent, Event } from '@/lib/Event';
 import supabase from '@/lib/supabase';
 import { Surface } from '@/lib/Surface';
-import { createDatabaseInserts, processDatabaseEvent } from '@/lib/Event';
+import { createDatabaseUpserts, processDatabaseEvent } from '@/lib/Event';
 
 export const Route = createFileRoute('/')({ component: App });
 
@@ -15,10 +15,14 @@ function App() {
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const surfaceRef = useRef<Surface | null>(null);
 
+  const queryClient = useQueryClient();
+
   const { data: databaseEvents } = useQuery<Array<Event>>({
     queryKey: ['events'],
     queryFn: async () => {
-      const { data } = await supabase.from('events').select('*');
+      const { data } = await supabase
+        .from('events')
+        .select('*');
       return (data || []).map((event) =>
         processDatabaseEvent(event as DatabaseEvent),
       );
@@ -27,7 +31,25 @@ function App() {
   });
 
   useEffect(() => {
-    surfaceRef.current = Surface.create().concatEvents(databaseEvents ?? []);
+    supabase.channel('changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'events',
+        },
+        () => queryClient.invalidateQueries({ queryKey: ['events'] }),
+      )
+      .subscribe();
+  }, []);
+
+  useEffect(() => {
+    if (surfaceRef.current == null) {
+      surfaceRef.current = Surface.create().setDatabaseEvents(databaseEvents ?? []);
+    } else {
+      surfaceRef.current = surfaceRef.current.setDatabaseEvents(databaseEvents ?? []);
+    }
   }, [databaseEvents]);
 
   useEffect(() => {
@@ -100,8 +122,9 @@ function App() {
       const what = supabase
         .from('events')
         .upsert(
-          createDatabaseInserts(databaseEvents, surfaceRef.current.events),
+          createDatabaseUpserts(databaseEvents, surfaceRef.current.events),
         );
+      what.then((what) => { console.log(what) });
     }
   }
 

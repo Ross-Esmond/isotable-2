@@ -1,4 +1,4 @@
-import { List, Map } from 'immutable';
+import { List, Map, Set } from 'immutable';
 import * as THREE from 'three';
 import { Camera } from './Camera';
 import { EventType } from './Event';
@@ -65,11 +65,30 @@ export class Surface {
     return this.setCamera(fn(this.camera));
   }
 
-  concatEvents(events: Array<Event>): Surface {
+  setDatabaseEvents(events: Array<Event>): Surface {
+    let ids = this.events.reduce((ids, { snowportId }) => ids.add(snowportId), Set<number>());
+    const nextEvents = this.events.asMutable();
+    for (const event of events) {
+      if (!ids.has(event.snowportId)) {
+        nextEvents.push(event);
+      }
+    }
+
     return new Surface(
       this.camera,
       this.priorEvents,
-      this.events.concat(events),
+      nextEvents.asImmutable(),
+      this.meshes,
+      this.threeScene,
+      this.threeCamera,
+    );
+  }
+
+  private addEvent(event: Event): Surface {
+    return new Surface(
+      this.camera,
+      this.priorEvents,
+      this.events.push(event),
       this.meshes,
       this.threeScene,
       this.threeCamera,
@@ -101,8 +120,7 @@ export class Surface {
       }
     }
     if (result !== null) {
-      return this.concatEvents([
-        {
+      return this.addEvent({
           entity: 0,
           type: EventType.Grab,
           snowportId: takeSnowportId(),
@@ -110,8 +128,7 @@ export class Surface {
           componentId: result.id,
           xOffset: xWorld - result.x,
           yOffset: yWorld - result.y,
-        } as GrabEvent,
-      ]);
+        } as GrabEvent);
     } else {
       return this.setCamera(this.camera.addPointer(id, x, y, width, height));
     }
@@ -133,8 +150,7 @@ export class Surface {
         width,
         height,
       );
-      return this.concatEvents([
-        {
+      return this.addEvent({
           entity: 0,
           type: EventType.Drag,
           snowportId: takeSnowportId(),
@@ -142,8 +158,7 @@ export class Surface {
           componentId: component.id,
           x: xWorld - component.grab.offsetX,
           y: yWorld - component.grab.offsetY,
-        } as DragEvent,
-      ]);
+        } as DragEvent);
     } else {
       return this.setCamera(this.camera.updatePointer(id, x, y, width, height));
     }
@@ -153,15 +168,13 @@ export class Surface {
     const [components] = processEvents(this.events, this.events);
     const component = components.find((c) => c.grab?.pointerId === id);
     if (component?.grab) {
-      return this.concatEvents([
-        {
+      return this.addEvent({
           entity: 0,
           type: EventType.Drop,
           snowportId: takeSnowportId(),
           pointerId: id,
           componentId: component.id,
-        },
-      ]);
+        });
     } else {
       return this.setCamera(this.camera.removePointer(id));
     }
