@@ -2,7 +2,7 @@ let currentTime = 0;
 let offsetTime = -1;
 // the next index that should be used
 let nextIndex = 0;
-const sourceCode = 0; // TODO make this dynamic
+const sourceCode = 1; // TODO make this dynamic
 
 // uses only 52 bits of the number to maintain percision with floating point
 // 36 bits for time in milliseconds (little over 2 years)

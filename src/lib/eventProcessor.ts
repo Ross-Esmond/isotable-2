@@ -1,4 +1,4 @@
-import { List, Map } from 'immutable';
+import { Map } from 'immutable';
 import { EventType } from './Event';
 import { Component } from './Component';
 import type {
@@ -9,115 +9,101 @@ import type {
   GrabEvent,
 } from './Event';
 
-export type EventResult = [
-  /** previously extant components */
-  List<Component>,
-  /** components created since index */
-  List<Component>,
-];
+let lastEvents = Map<number, Event>();
+let lastComponents = Map<number, Component>();
 
-const singleCache = new WeakMap<List<Event>, EventResult>();
-const doubleCache = new WeakMap<
-  List<Event>,
-  WeakMap<List<Event>, EventResult>
->();
+export function resetEvents() {
+  lastEvents = Map<number, Event>();
+  lastComponents = Map<number, Component>();
+}
 
-export function processEvents(
-  events: List<Event>,
-  priorEvents?: List<Event>,
-): EventResult {
-  if (events.isEmpty()) {
-    return [List<Component>(), List<Component>()];
-  }
-  if (priorEvents == null && singleCache.has(events)) {
-    return singleCache.get(events)!;
-  }
-  if (priorEvents != null && doubleCache.get(events)?.has(priorEvents)) {
-    return doubleCache.get(events)!.get(priorEvents)!;
+export function processEvents(nextEvents: Map<number, Event>): Map<number, Component> {
+  const lastKeys = lastEvents.keySeq().toSet();
+  const nextKeys = nextEvents.keySeq().toSet();
+
+  const nextComponents = lastComponents.asMutable();
+
+  const lastOnly = lastKeys.subtract(nextKeys);
+  const nextOnly = nextKeys.subtract(lastKeys);
+
+  if (!lastOnly.isEmpty()) {
+    throw new Error('events were removed');
   }
 
-  const [created, existing] =
-    priorEvents != null
-      ? processEvents(priorEvents)
-      : [List<Component>(), List<Component>()];
+  const grabs = Map<number, [number, number, [number, number]]>().asMutable();
+  const moves = Map<number, [number, [number, number]]>().asMutable();
+  const drops = Map<number, [number, number]>().asMutable();
 
-  const createdComponents = Map<number, Component>().asMutable();
-  const existingComponents = existing
-    .concat(created)
-    .toMap()
-    .mapKeys((_, what) => what.id)
-    .asMutable();
-
-  const latestMoves = Map<number, DragEvent>().asMutable();
-
-  for (let i = priorEvents?.count() ?? 0; i < events.count(); i++) {
-    const event = events.get(i)!;
+  for (const nextKey of nextOnly) {
+    const event = nextEvents.get(nextKey)!;
     if (event.type === EventType.Create) {
-      const createdEvent = event as CreatedEvent;
-      createdComponents.set(
-        createdEvent.componentId,
-        Component.create(
-          createdEvent.componentId,
-          createdEvent.x,
-          createdEvent.y,
-        ),
+      const { componentId, x, y } = event as CreatedEvent;
+      nextComponents.set(
+        componentId,
+        Component.create(componentId, x, y),
       );
     } else if (event.type === EventType.Grab) {
-      const grabEvent = event as GrabEvent;
-      const targetMap = createdComponents.has(event.componentId)
-        ? createdComponents
-        : existingComponents;
-      targetMap.update(event.componentId, (component) =>
-        component?.setGrab(
-          grabEvent.pointerId,
-          grabEvent.xOffset,
-          grabEvent.yOffset,
+      const { componentId, pointerId, snowportId, x, y } = event as GrabEvent;
+      grabs.update(
+        componentId,
+        [-1, 0, [0, 0]],
+        ([lastId, id, [lastX, lastY]]) => (
+          snowportId > lastId ? [snowportId, pointerId, [x, y]] : [lastId, id, [lastX, lastY]]
         ),
       );
     } else if (event.type === EventType.Drag) {
-      latestMoves.set(event.componentId, event as DragEvent);
-    } else {
-      const dropEvent = event as DropEvent;
-      const targetMap = createdComponents.has(event.componentId)
-        ? createdComponents
-        : existingComponents;
-      targetMap.update(event.componentId, (component) => {
-        if (component == null) {
-          return component;
-        }
-        if (
-          component.grab == null ||
-          component.grab.pointerId !== dropEvent.pointerId
-        ) {
-          return component;
-        }
+      const { componentId, snowportId, x, y } = event as DragEvent;
+      moves.update(
+        componentId,
+        [-1, [0, 0]],
+        ([lastId, [lastX, lastY]]) => (
+          snowportId > lastId ? [snowportId, [x, y]] : [lastId, [lastX, lastY]]
+        ),
+      );
+    } else if (event.type === EventType.Drop) {
+      const { componentId, pointerId, snowportId } = event as DropEvent;
+      drops.update(
+        componentId,
+        [-1, 0],
+        ([lastId, id]) => (
+          snowportId > lastId ? [snowportId, pointerId] : [lastId, id]
+        ),
+      );
+    }
+  }
+
+  for (const [id, [snowportId, pointerId, [x, y]]] of grabs) {
+    nextComponents.update(id, (component) => {
+      if (component == null) {
+        throw new Error('component was grabbed but did not yet exist');
+      }
+      return component.setGrab(snowportId, pointerId, x, y);
+    });
+  }
+
+  for (const [id, [, [x, y]]] of moves) {
+    nextComponents.update(id, (component) => {
+      if (component == null) {
+        throw new Error('component was moved but did not yet exist');
+      }
+      return component.setPosition(x, y);
+    });
+  }
+
+  for (const [id, [snowportId]] of drops) {
+    nextComponents.update(id, (component) => {
+      if (component == null) {
+        throw new Error('component was dropped but did not yet exist');
+      }
+      // TODO deal with multiple pointerIds
+      if ((component.grab?.snowportId ?? -1) < snowportId) {
         return component.removeGrab();
-      });
-    }
+      };
+    });
   }
 
-  for (const [componentId, moveEvent] of latestMoves) {
-    const targetMap = createdComponents.has(componentId)
-      ? createdComponents
-      : existingComponents;
-    targetMap.update(componentId, (component) =>
-      component?.setPosition(moveEvent.x, moveEvent.y),
-    );
-  }
+  lastEvents = nextEvents;
+  lastComponents = nextComponents.asImmutable();
 
-  const result = [
-    existingComponents.toList(),
-    createdComponents.toList(),
-  ] as EventResult;
-
-  if (priorEvents == null) {
-    singleCache.set(events, result);
-  } else {
-    if (!doubleCache.has(events)) {
-      doubleCache.set(events, new WeakMap<List<Event>, EventResult>());
-    }
-    doubleCache.get(events)!.set(priorEvents, result);
-  }
-
-  return result;
+  return lastComponents;
 }

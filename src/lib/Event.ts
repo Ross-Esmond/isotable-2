@@ -92,35 +92,36 @@ export function createDatabaseUpserts(
   return upserts;
 }
 
-export interface Event {
+export interface EventBase {
   /**
    * The entity associated with the event, e.g., for Grab events, this could be the ID of the user or system initiating the grab.
    */
   readonly entity: number;
-  readonly type: EventType;
   readonly snowportId: number;
   readonly pointerId: number;
   readonly componentId: number;
 }
 
-export interface CreatedEvent extends Event {
+export interface CreatedEvent extends EventBase {
   readonly type: EventType.Create;
   readonly x: number;
   readonly y: number;
 }
 
-export interface GrabEvent extends Event {
+export interface GrabEvent extends EventBase {
   readonly type: EventType.Grab;
-  readonly xOffset: number;
-  readonly yOffset: number;
+  readonly x: number;
+  readonly y: number;
 }
 
-export interface DragEvent extends Event {
+export interface DragEvent extends EventBase {
   readonly type: EventType.Drag;
   readonly x: number;
   readonly y: number;
 }
 
-export interface DropEvent extends Event {
+export interface DropEvent extends EventBase {
   readonly type: EventType.Drop;
 }
+
+export type Event = CreatedEvent | GrabEvent | DragEvent | DropEvent;

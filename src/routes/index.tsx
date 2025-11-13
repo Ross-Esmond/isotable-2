@@ -1,56 +1,17 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import * as THREE from 'three';
 import { useEffect, useRef } from 'react';
 import type { PointerEvent, WheelEvent } from 'react';
-import type { DatabaseEvent, Event } from '@/lib/Event';
 import supabase from '@/lib/supabase';
-import { Surface } from '@/lib/Surface';
-import { createDatabaseUpserts, processDatabaseEvent } from '@/lib/Event';
+import {useSupabaseSurface} from '@/lib/SupabaseSurface';
 
 export const Route = createFileRoute('/')({ component: App });
 
 function App() {
   const shell = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const surfaceRef = useRef<Surface | null>(null);
 
-  const queryClient = useQueryClient();
-
-  const { data: databaseEvents } = useQuery<Array<Event>>({
-    queryKey: ['events'],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from('events')
-        .select('*');
-      return (data || []).map((event) =>
-        processDatabaseEvent(event as DatabaseEvent),
-      );
-    },
-    throwOnError: true,
-  });
-
-  useEffect(() => {
-    supabase.channel('changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'events',
-        },
-        () => queryClient.invalidateQueries({ queryKey: ['events'] }),
-      )
-      .subscribe();
-  }, []);
-
-  useEffect(() => {
-    if (surfaceRef.current == null) {
-      surfaceRef.current = Surface.create().setDatabaseEvents(databaseEvents ?? []);
-    } else {
-      surfaceRef.current = surfaceRef.current.setDatabaseEvents(databaseEvents ?? []);
-    }
-  }, [databaseEvents]);
+  const [render, setSurface] = useSupabaseSurface(supabase);
 
   useEffect(() => {
     if (shell.current == null) return;
@@ -69,7 +30,7 @@ function App() {
     shell.current.appendChild(renderer.domElement);
 
     function animate() {
-      surfaceRef.current = surfaceRef.current?.render(renderer) ?? null;
+      render(renderer);
     }
     renderer.setAnimationLoop(animate);
 
@@ -77,7 +38,7 @@ function App() {
       renderer.setAnimationLoop(null);
       shell.current?.removeChild(renderer.domElement);
     };
-  }, [shell.current]);
+  });
 
   useEffect(() => {
     return () => {
@@ -86,34 +47,31 @@ function App() {
   }, []);
 
   function onWheel(event: WheelEvent<HTMLDivElement>) {
-    surfaceRef.current =
-      surfaceRef.current?.updateCamera((camera) =>
-        camera.zoom(event.deltaY / 120),
-      ) ?? null;
+    setSurface(surface => surface.updateCamera((camera) =>
+      camera.zoom(event.deltaY / 120),
+    ));
   }
 
   function pointerdown(event: PointerEvent) {
     shell.current?.setPointerCapture(event.pointerId);
-    surfaceRef.current =
-      surfaceRef.current?.grab(
-        event.pointerId,
-        event.clientX,
-        event.clientY,
-        window.innerWidth,
-        window.innerHeight,
-      ) ?? null;
+    setSurface(surface => surface.grab(
+      event.pointerId,
+      event.clientX,
+      event.clientY,
+      window.innerWidth,
+      window.innerHeight,
+    ));
   }
 
   function pointermove(event: PointerEvent) {
-    surfaceRef.current =
-      surfaceRef.current?.drag(
-        event.pointerId,
-        event.clientX,
-        event.clientY,
-        window.innerWidth,
-        window.innerHeight,
-      ) ?? null;
-
+    setSurface(surface => surface.drag(
+      event.pointerId,
+      event.clientX,
+      event.clientY,
+      window.innerWidth,
+      window.innerHeight,
+    ));
+    /*
     if (
       databaseEvents != null &&
       surfaceRef.current != null &&
@@ -126,11 +84,12 @@ function App() {
         );
       what.then((what) => { console.log(what) });
     }
+     */
   }
 
   function pointerup(event: PointerEvent) {
     shell.current?.releasePointerCapture(event.pointerId);
-    surfaceRef.current = surfaceRef.current?.drop(event.pointerId) ?? null;
+    setSurface(surface => surface.drop(event.pointerId));
   }
 
   return (

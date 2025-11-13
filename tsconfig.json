@@ -12,7 +12,10 @@
     "jsx": "react-jsx",
     "module": "ESNext",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"],
+    "types": [
+      "vite/client",
+      "jest-immutable-matchers"
+    ],
 
     /* Bundler mode */
     "moduleResolution": "bundler",
